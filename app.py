@@ -27,10 +27,10 @@ def deploy():
             return render_template('index.html', error_message='Deployment failed! Error in apt update.')
 
         # Install Docker using sudo
-        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S apt install -y git')
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S apt install -y git nginx')
         exit_status = stderr.channel.recv_exit_status()
         if exit_status != 0:
-            return render_template('index.html', error_message='Deployment failed! Error in installing git.')
+            return render_template('index.html', error_message='Deployment failed! Error in installing git or nginx.')
 
         # Check if the SOC-Build directory exists
         _, stdout, _ = ssh.exec_command('ls SOC-Build')
@@ -66,8 +66,19 @@ def deploy():
         if exit_status != 0:
             return render_template('index.html', error_message='Deployment failed! Error in installing Docker Compose.')
 
-        return render_template('index.html', status_message='Environment setup completed!', environment_setup_completed=True)
+        # Generate SSL certificate and key using openssl
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S mkdir -p /etc/nginx/ssl')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+            return render_template('index.html', error_message='Deployment failed! Error in creating certificate directory.')
 
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -subj "/CN=Techso-Group" -keyout /etc/nginx/ssl/private-key.pem -out /etc/nginx/ssl/certificate.pem')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+            return render_template('index.html', error_message='Deployment failed! Error in generating SSL certificate and key.')
+
+        return render_template('index.html', status_message='Environment setup completed!', environment_setup_completed=True)
+    
     elif 'compose' in request.form:
 
         # Change to the repository directory
@@ -88,6 +99,42 @@ def deploy():
         if exit_status != 0:
            return render_template('index.html', error_message='Deployment failed! Error in copying app conf to the repository directory.')
 
+        # Change to the repository directory
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S rm -r /var/www/html')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+           return render_template('index.html', error_message='html folder not removed.')          
+        
+        # Change to the repository directory
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S cp -r /home/{ssh_username}/SOC-Build/html /var/www/')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+           return render_template('index.html', error_message='Deployment failed! Error in copying html folder to the repository directory.')
+
+        # Change to the repository directory
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S rm /etc/nginx/sites-enabled/default')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+           return render_template('index.html', error_message='default file not removed.') 
+
+        # Change to the repository directory
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S cp /home/{ssh_username}/SOC-Build/services /etc/nginx/sites-available/')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+           return render_template('index.html', error_message='Deployment failed! Error in copying services conf to the repository directory.')                 
+        
+        # Change to the repository directory
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S ln -s /etc/nginx/sites-available/services /etc/nginx/sites-enabled/')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+           return render_template('index.html', error_message='Deployment failed! Error in copying services conf to the repository directory.')          
+
+        # Change to the repository directory
+        _, stderr, _ = ssh.exec_command(f'echo {ssh_password} | sudo -S systemctl restart nginx')
+        exit_status = stderr.channel.recv_exit_status()
+        if exit_status != 0:
+           return render_template('index.html', error_message='cant restart nginx')          
+        
         # Execute the docker-compose up command
         ssh.exec_command(f'echo {ssh_password} | sudo -S nohup docker-compose up > /dev/null 2>&1 &')
 
